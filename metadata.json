@@ -1,0 +1,6 @@
+{
+  "name": "IndiaMART CXO Conflict Intelligence",
+  "description": "AI-powered CXO Complaint Intelligence Assistant to analyze customer ticket logs and generate executive-level structured insights of Buyer-Supplier Conflicts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
