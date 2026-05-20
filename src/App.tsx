@@ -27,6 +27,107 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { ConflictTicketAnalysis, SampleTicket } from "./types";
 
+const LOCAL_SAMPLES: SampleTicket[] = [
+  {
+    id: "TIC-890214",
+    title: "Unresponsive Supplier on LED Lights Order",
+    rawText: `[2026-05-10 10:00:00 BST]
+TICKET CREATED: TIC-890214
+Type: Buyer-Supplier Conflict
+Matchmaking Source: Buy Lead Purchased
+Disputed Amount: INR 45,000
+
+Buyer Details:
+Name: Arun Sharma (Proprietor, Sharma Electricals)
+Contact: arun.sharma@example.com
+
+Seller Details:
+Company Name: Glowtech Enterprises
+GLID: 88472910
+Executive Assigned: Deepa Nair
+
+RCA Notes (2026-05-10 11:30:00 BST):
+Buyer complained that seller Glowtech Enterprises received advanced payment of INR 45,000 for 500 units of LED Tube lights and has gone completely unresponsive. No material delivered.
+
+Follow-up Log (2026-05-11 12:00:00 BST):
+Executive Deepa Nair contacted seller. Glowtech representative said they suffered production downtime but will dispatch in 3 days.
+
+Follow-up Log (2026-05-14 14:00:00 BST):
+Buyer called back. Still no response from supplier. Buyer sounds highly frustrated, supplier is not picking calls at all. Buyer demands refund. Status moved to Paid BS Conflict.
+
+Status Update (2026-05-15 09:30:00 BST):
+Deepa Nair served formal warning email to Glowtech.
+
+Seller Action (2026-05-16 16:30:00 BST):
+Seller submitted proof of bank refund of INR 45,000 to Arun Sharma's account.
+
+Resolution Comment (2026-05-17 11:00:00 BST):
+Executive verified the transaction ID with Arun Sharma. Arun confirmed receipt of refund. Issue Resolved.
+Final Status: Conflict Resolved - Refund Processed`
+  },
+  {
+    id: "TIC-449102",
+    title: "Wrong Product Delivered - High-Density Foam Blocks",
+    rawText: `[2026-05-12 09:00:00 BST]
+TICKET RAISED: TIC-449102
+Conflict Classification: Pre BS Conflict
+Channel: Catalog Match
+Disputed Value: INR 1,20,000
+
+Buyer: Rohan Mehra (Director, Mehra Packaging Labs)
+Seller: Royal Polymers Private Limited (GLID: 10938472)
+Assigned Executive: Rajesh Varma
+
+Complaint Description:
+Buyer received low-density packaging rolls instead of the high-density foam blocks ordered. Disputed amount is INR 1,20,000. Buyer is angry and disappointed because of production delays caused by this mistake.
+
+RCA Notes (2026-05-12 11:00:00 BST):
+Invoice confirms 'High-Density Foam Grade-A'. Supplier dispatch team mistakenly sent low-density rolls to Rohan Mehra's warehouse.
+
+Follow-up 1 (2026-05-13 10:30:00 BST):
+Rajesh Varma dialed Royal Polymers. Seller cooperative, acknowledged mistake. Agreed to pick up low-density material and dispatch the correct items at their own cost.
+
+Follow-up 2 (2026-05-15 15:45:00 BST):
+Rohan Mehra confirmed courier picked up wrong rolls. Correct items received in transit.
+
+Buyer Confirmation (2026-05-18 12:00:00 BST):
+Rohan Mehra confirmed that correct High-Density Foam blocks are received. Quality checked and accepted. Case closed.
+Final Outcome: Conflict Resolved - Correct Goods Received`
+  },
+  {
+    id: "TIC-660193",
+    title: "Missing Documents - Industrial Steel Flanges",
+    rawText: `[2026-05-14 11:15:00 BST]
+TICKET: TIC-660193
+Type: Buyer-Supplier Conflict
+Source: MDC (Mobile Device Commercial)
+Amount: INR 3,50,000
+
+Buyer Info: Suresh K. (Global Pipeline Services)
+Seller Info: Apex Steel Tubing (GLID: 55432190)
+Handler: Neha Gupta
+
+Initial Entry:
+Suresh K. claims steel flanges didn't pass site inspection because of lack of material Mill Test Certificates (MTC). Seller refuses to provide certificates.
+
+RCA (2026-05-14 14:00:00 BST):
+Apex Steel claims Buyer hasn't cleared the final 10% outstanding invoice, hence withholding MTC. Disputed amount of material is INR 3,50,000.
+
+First Follow-up (2026-05-15 10:00:00 BST):
+Neha Gupta contacted Suresh. Suresh refuses to pay final 10% until MTC is verified. Impasse. Neha requested official purchase agreement and invoices from Suresh.
+
+Follow-up 2 (2026-05-16 11:00:00 BST):
+No document received from buyer Suresh K.
+
+Follow-up 3 (2026-05-18 16:00:00 BST):
+Suresh K. unresponsive to multiple follow-ups and emails requesting documentation.
+
+Final Resolution Notes (2026-05-20 07:30:00 BST):
+Since the buyer Suresh K. failed to submit required invoices and signed PO documents, and remains uncontactable for 4 days, the ticket is auto-closed with no action taken.
+Status: No Action Taken – Documents Not Received`
+  }
+];
+
 export default function App() {
   const [rawText, setRawText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -38,6 +139,13 @@ export default function App() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [samples, setSamples] = useState<SampleTicket[]>([]);
   const [selectedSampleId, setSelectedSampleId] = useState<string>("");
+  const [useDirectClientMode, setUseDirectClientMode] = useState<boolean>(() => {
+    return localStorage.getItem("im_llm_direct_mode") === "true";
+  });
+  const [clientAccessKey, setClientAccessKey] = useState<string>(() => {
+    return localStorage.getItem("im_llm_access_key") || "";
+  });
+  const [showDirectSetup, setShowDirectSetup] = useState<boolean>(false);
 
   const loadingSteps = [
     "Decrypting raw ticket log headers...",
@@ -54,15 +162,27 @@ export default function App() {
       try {
         const res = await fetch("/api/samples");
         if (res.ok) {
-          const data = await res.json();
-          setSamples(data);
-          // Auto-select first sample to make the app ready to test out-of-the-box!
-          if (data && data.length > 0) {
-            handleSelectSample(data[0]);
+          const contentType = res.headers.get("Content-Type") || "";
+          if (contentType.toLowerCase().includes("json")) {
+            const data = await res.json();
+            setSamples(data);
+            if (data && data.length > 0) {
+              handleSelectSample(data[0]);
+            }
+            return;
           }
         }
+        // Fallback to local samples
+        setSamples(LOCAL_SAMPLES);
+        if (LOCAL_SAMPLES.length > 0) {
+          handleSelectSample(LOCAL_SAMPLES[0]);
+        }
       } catch (err) {
-        console.error("Failed to load samples from backend:", err);
+        console.error("Failed to load samples from backend, loading fallback samples... Error:", err);
+        setSamples(LOCAL_SAMPLES);
+        if (LOCAL_SAMPLES.length > 0) {
+          handleSelectSample(LOCAL_SAMPLES[0]);
+        }
       }
     };
     fetchSamples();
@@ -152,24 +272,151 @@ export default function App() {
     setIsMissingSecret(false);
 
     try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ rawText })
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        if (data.isMissingSecret) {
-          setIsMissingSecret(true);
+      if (useDirectClientMode) {
+        if (!clientAccessKey.trim()) {
+          throw new Error("Please enter your IndiaMART LLM Access Key first or switch back to Backend Proxy.");
         }
-        throw new Error(data.error || "Failed to analyze conflict logs.");
-      }
 
-      setAnalysis(data);
+        const systemPrompt = `You are an AI-powered CXO Complaint Intelligence Assistant for IndiaMART Buyer-Supplier Conflict tickets.
+Your task is to analyze raw customer ticket history logs and generate a concise, structured, executive-level summary in JSON.
+
+Output format MUST be EXACTLY the following JSON schema:
+{
+  "ticket_id": string,
+  "ticket_type": string,
+  "source_of_introduction": string,
+  "seller_name": string,
+  "seller_glid": string,
+  "buyer_name": string,
+  "product_name": string,
+  "complaint_type": "Delivery Issue" | "Quality Issue" | "Refund Issue" | "Communication Issue" | "Fraud Suspicion" | "Delay" | "Wrong Product",
+  "buyer_sentiment": string,
+  "disputed_amount": string,
+  "ticket_raised_time": string,
+  "moved_to_paid_bs_time": string,
+  "assigned_to_executive": string,
+  "first_followup_time": string,
+  "final_resolution_time": string,
+  "final_status": string,
+  "resolution_summary": string,
+  "cxo_summary": string,
+  "two_line_summary": string,
+  "key_highlights": string[]
+}
+
+Strictly adhere to the following definitions and constraints:
+- ticket_id: Extract the unique Ticket ID (e.g. "TIC-890214"). Use "NA" if not found.
+- ticket_type: Conflict type/classification. Often Pre BS Conflict, BS Conflict, or Buyer-Supplier Conflict.
+- source_of_introduction: Matchmaking source channel (e.g. "Buy Lead Purchased", "Own WhatsApp", "MDC", "Catalog", or "Not Found").
+- seller_name: Extract Respondent Company Name.
+- seller_glid: Extract Respondent GLID number.
+- buyer_name: Extract buyer name.
+- product_name: Extract product name or "NA".
+- complaint_type: Standard classification of the core complaint. Choose one.
+- buyer_sentiment: Infer buyer emotion from complaint history (e.g., "Dissatisfied due to delayed delivery", "Angry because supplier became unresponsive", "Frustrated over wrong product received").
+- disputed_amount: Extract dispute value (e.g. "INR 45,000", "INR 1,20,000").
+- ticket_raised_time: Accurate chronological timestamp of ticket raised.
+- moved_to_paid_bs_time: Accurate chronological timestamp of transition to Paid BS, or "NA".
+- assigned_to_executive: IndiaMART support representative assigned to the executive role.
+- first_followup_time: Accurate chronological timestamp of first followup log, or "NA".
+- final_resolution_time: Accurate chronological timestamp of completion/resolution, or "NA".
+- final_status: Business-friendly final outcome (e.g., "Conflict Resolved – Goods Received", "No Action Taken – Documents Not Received", "Refund Processed").
+- resolution_summary: Factual summary of how the case was closed and seller behavior.
+- cxo_summary: Concise executive paragraph explaining What issue happened, Escalation flow, Final outcome, SLA/follow-up quality if visible. MAXIMUM 80 Words.
+- two_line_summary: Exactly two-line short summary for busy managers.
+- key_highlights: Array of 3 to 5 brief high-impact highlights.
+
+Rules:
+1. Chronological order must determine event analysis.
+2. Ignore repetitive status updates.
+3. Be 100% factual. NEVER hallucinate. Use "NA" for missing information.
+4. Output MUST be valid, well-formed JSON content. Do NOT include markdown blocks like \`\`\`json around it.`;
+
+        const res = await fetch("https://imllm.intermesh.net/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${clientAccessKey}`
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            messages: [
+              {
+                role: "system",
+                content: systemPrompt
+              },
+              {
+                role: "user",
+                content: rawText
+              }
+            ],
+            temperature: 0.2
+          })
+        });
+
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`IndiaMART LLM Gateway (Client Connect) failed with status ${res.status}: ${errText || "No response details"}`);
+        }
+
+        const data = await res.json();
+        const contentText = data?.choices?.[0]?.message?.content;
+        if (!contentText) {
+          throw new Error("No output content generated by the LLM Gateway.");
+        }
+
+        // Clean any code blocks returned back
+        let cleanedText = contentText.trim();
+        if (cleanedText.startsWith("```")) {
+          cleanedText = cleanedText.replace(/^```(json)?\n?/, "");
+        }
+        if (cleanedText.endsWith("```")) {
+          cleanedText = cleanedText.replace(/```$/, "");
+        }
+        cleanedText = cleanedText.trim();
+
+        const resultJson = JSON.parse(cleanedText);
+        setAnalysis(resultJson);
+      } else {
+        // Standard Backend Proxy Mode
+        const res = await fetch("/api/analyze", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ rawText })
+        });
+
+        const responseText = await res.text();
+        let isJsonResponse = false;
+        let data: any = null;
+        try {
+          data = JSON.parse(responseText);
+          isJsonResponse = true;
+        } catch (_) {
+          isJsonResponse = false;
+        }
+
+        if (!isJsonResponse) {
+          if (responseText.trim().toLowerCase().startsWith("<!doctype") || responseText.includes("The page") || responseText.includes("not found")) {
+            setShowDirectSetup(true);
+            setUseDirectClientMode(true);
+            localStorage.setItem("im_llm_direct_mode", "true");
+            throw new Error("Vercel Hosting Fallback: The backend server is running in single-page app (SPA) mode. Because of this, API routes like /api/analyze return HTML files on Vercel. We have automatically toggled 'Direct Client Mode' for you! Please key in your IndiaMART LLM credentials below to connect safely from this window.");
+          } else {
+            throw new Error(`Non-JSON text returned from server: ${responseText.slice(0, 150)}... Please verify your server status.`);
+          }
+        }
+
+        if (!res.ok) {
+          if (data?.isMissingSecret) {
+            setIsMissingSecret(true);
+          }
+          throw new Error(data?.error || "Failed to analyze conflict logs.");
+        }
+
+        setAnalysis(data);
+      }
     } catch (err: any) {
       setErrorMessage(err.message || "An unexpected error occurred.");
     } finally {
@@ -290,10 +537,6 @@ ${analysis.key_highlights.map(h => `- ${h}`).join("\n")}
           </div>
           
           <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
-            <div className="px-3 py-1.5 bg-slate-100 text-slate-700 border border-slate-200 rounded-full font-mono flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 text-slate-500" />
-              SLA Parser V1.4
-            </div>
             {analysis && (
               <>
                 <div id="badge-ticket-id" className="px-3 py-1.5 bg-orange-50 text-orange-700 border border-orange-100 rounded-full font-mono">
@@ -308,16 +551,6 @@ ${analysis.key_highlights.map(h => `- ${h}`).join("\n")}
         </div>
       </header>
 
-      {/* Hero Intro text block */}
-      <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 pt-4">
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm text-slate-700 leading-relaxed text-sm">
-          <div className="flex items-center gap-2 text-xs font-semibold text-orange-600 uppercase tracking-widest mb-1.5">
-            <Sparkles className="w-4 h-4" /> Enterprise Support Headquarters
-          </div>
-          Welcome to the executive conflict analysis console. Provide raw Buyer-Supplier ticket diaries with their follow-up milestones, correspondence transcripts, and RCA entries to generate structured bento analytics.
-        </div>
-      </div>
-
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         
         {/* Left Hand: Log Feed & Inputs */}
@@ -325,15 +558,6 @@ ${analysis.key_highlights.map(h => `- ${h}`).join("\n")}
           
           {/* Quick Evaluators Case panel (Bento block style) */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-            <div className="flex items-center justify-between mb-3 text-xs uppercase text-slate-500 font-bold tracking-wider">
-              <span className="flex items-center gap-1.5 font-sans">
-                <Database className="w-3.5 h-3.5 text-orange-600 animate-pulse" />
-                Conflict Telemetry Databank
-              </span>
-              <span className="text-[10px] bg-orange-100 text-orange-700 font-bold px-2 py-0.5 rounded-md">
-                3 Standard Cases
-              </span>
-            </div>
             
             <div className="grid grid-cols-1 gap-2">
               {samples.map((sample) => (
@@ -387,6 +611,67 @@ ${analysis.key_highlights.map(h => `- ${h}`).join("\n")}
               >
                 Clear Input
               </button>
+            </div>
+
+            {/* Gateway Mode Switcher */}
+            <div className="bg-slate-50/70 px-4 py-3 border-b border-slate-150 flex flex-col gap-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-mono">Gateway Connection</span>
+                <div className="flex items-center gap-1 bg-slate-200/60 p-0.5 rounded-lg text-[10px] font-bold">
+                  <button
+                    onClick={() => {
+                      setUseDirectClientMode(false);
+                      localStorage.setItem("im_llm_direct_mode", "false");
+                    }}
+                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                      !useDirectClientMode 
+                        ? "bg-white text-slate-950 shadow-xs border border-slate-200/50" 
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    Backend Proxy
+                  </button>
+                  <button
+                    onClick={() => {
+                      setUseDirectClientMode(true);
+                      localStorage.setItem("im_llm_direct_mode", "true");
+                    }}
+                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                      useDirectClientMode 
+                        ? "bg-white text-slate-950 shadow-xs border border-slate-200/50" 
+                        : "text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    Direct Client Fallback
+                  </button>
+                </div>
+              </div>
+              
+              {(useDirectClientMode || showDirectSetup) && (
+                <div className="pt-2 border-t border-slate-200/60 flex flex-col gap-1.5 animate-fadeIn">
+                  <div className="flex justify-between items-center text-[9px] font-bold text-slate-500 font-mono">
+                    <span>LLM GATEWAY ACCESS KEY:</span>
+                    <span className="text-emerald-700 bg-emerald-50 px-1 py-0.5 rounded-sm border border-emerald-100 uppercase transform scale-95 origin-right">
+                      Client-Side Secured
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="password"
+                      placeholder="Paste Bearer Access Key (e.g. sk-...)"
+                      value={clientAccessKey}
+                      onChange={(e) => {
+                        setClientAccessKey(e.target.value);
+                        localStorage.setItem("im_llm_access_key", e.target.value);
+                      }}
+                      className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg bg-white border border-slate-200 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500/20 placeholder:text-slate-350 shadow-inner"
+                    />
+                  </div>
+                  <p className="text-[9.5px] text-slate-400 font-medium leading-normal">
+                    This token calls IndiaMART Gateway directly via HTTPS from your device and is never sent to the app container.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div 
